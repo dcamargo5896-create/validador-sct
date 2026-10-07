@@ -6,7 +6,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Base de datos en memoria local con el registro de tu imagen original
+// Datos locales integrados (No requiere Supabase)
 const baseDatosTitulos = {
   "TE-INM-9981-264563-125356-770": {
     folio_digital: "TE-INM-9981-264563-125356-770",
@@ -21,9 +21,7 @@ const baseDatosTitulos = {
   }
 };
 
-// ==========================================
-// 1. ENDPOINT DE CONSULTA PÚBLICA (API)
-// ==========================================
+// 1. ENDPOINT API DE CONSULTA
 app.get('/api/v1/titulos/:folio', (req, res) => {
   const { folio } = req.params;
   const titulo = baseDatosTitulos[folio];
@@ -31,7 +29,7 @@ app.get('/api/v1/titulos/:folio', (req, res) => {
   if (!titulo) {
     return res.status(404).json({ 
       valido: false, 
-      mensaje: "El folio digital no se encuentra registrado en el sistema oficial del portal." 
+      mensaje: "El folio digital no se encuentra registrado en el sistema oficial." 
     });
   }
 
@@ -54,57 +52,7 @@ app.get('/api/v1/titulos/:folio', (req, res) => {
   });
 });
 
-// ==========================================
-// 2. ENDPOINT PARA EMITIR NUEVOS TÍTULOS (QR)
-// ==========================================
-app.post('/api/v1/titulos/emitir', async (req, res) => {
-  const { 
-    folio_digital, curp, nombre, primer_apellido, segundo_apellido,
-    carrera_nombre, clave_carrera, institucion_nombre, fecha_expedicion, sello_digital 
-  } = req.body;
-
-  if (!folio_digital || !curp || !nombre || !primer_apellido || !carrera_nombre || !institucion_nombre) {
-    return res.status(400).json({ error: "Faltan campos obligatorios en la solicitud." });
-  }
-
-  const nombreCompleto = `${nombre} ${primer_apellido} ${segundo_apellido || ''}`.trim().toUpperCase();
-
-  baseDatosTitulos[folio_digital] = {
-    folio_digital: folio_digital,
-    estatus: "AUTENTICADO",
-    nombre_completo: nombreCompleto,
-    curp: curp.toUpperCase(),
-    carrera: carrera_nombre.toUpperCase(),
-    clave_carrera: clave_carrera || "N/A",
-    institucion: institucion_nombre.toUpperCase(),
-    fecha_expedicion: fecha_expedicion || new Date().toISOString().split('T')[0],
-    sello_digital: sello_digital || "SELLO_GENERICO_SCT_SISTEMA_LOCAL_INTEGRADO"
-  };
-
-  try {
-    const host = req.get('host');
-    const protocol = req.protocol;
-    const urlValidacion = `${protocol}://${host}/?folio=${folio_digital}`;
-
-    const qrCodeImage = await QRCode.toDataURL(urlValidacion, {
-      errorCorrectionLevel: 'M',
-      margin: 2,
-      scale: 8
-    });
-
-    res.status(201).json({
-      success: true,
-      url_verificacion: urlValidacion,
-      qr_base64: qrCodeImage
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Error al generar el archivo QR del título." });
-  }
-});
-
-// ==========================================
-// 3. INTERFAZ WEB DEL PORTAL (FRONTEND)
-// ==========================================
+// 2. INTERFAZ WEB DEL PORTAL
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -184,7 +132,7 @@ app.get('/', (req, res) => {
         function buscarManual() {
             const folio = document.getElementById('folioInput').value.trim();
             if (folio) {
-                const nuevaUrl = \`\${window.location.protocol}//\${window.location.host}\${window.location.pathname}?folio=\${encodeURIComponent(folio)}\`;
+                const nuevaUrl = window.location.protocol + '//' + window.location.host + window.location.pathname + '?folio=' + encodeURIComponent(folio);
                 window.history.pushState({path: nuevaUrl}, '', nuevaUrl);
                 consultarApi(folio);
             }
@@ -193,4 +141,27 @@ app.get('/', (req, res) => {
             const pvacio = document.getElementById('panelVacio'), perror = document.getElementById('panelError'), presultado = document.getElementById('panelResultado');
             pvacio.classList.add('hidden'); perror.classList.add('hidden'); presultado.classList.add('hidden');
             try {
-                const res = await fetch(\`/api/v1/titulos/\${folio}\`);
+                const res = await fetch('/api/v1/titulos/' + folio);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.mensaje || "Error en la consulta.");
+                document.getElementById('txtEstatus').innerText = data.estatus;
+                document.getElementById('lblNombre').innerText = data.datos_alumno.nombre_completo;
+                document.getElementById('lblCurp').innerText = data.datos_alumno.curp;
+                document.getElementById('lblCarrera').innerText = data.datos_academicos.carrera + ' (CLAVE: ' + data.datos_academicos.clave_carrera + ')';
+                document.getElementById('lblInstitucion').innerText = data.datos_academicos.institucion;
+                document.getElementById('lblFechaExp').innerText = data.datos_academicos.fecha_expedicion;
+                document.getElementById('lblSello').innerText = data.seguridad.sello_digital;
+                presultado.classList.remove('hidden');
+            } catch (err) {
+                document.getElementById('mensajeError').innerText = err.message;
+                perror.classList.remove('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
+  `);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
